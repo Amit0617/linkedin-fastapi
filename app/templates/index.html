@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vercel + FastAPI</title>
+    <title>LinkedIn Profile Fetcher</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         * {
@@ -39,7 +39,7 @@
         .logo {
             font-size: 1.25rem;
             font-weight: 600;
-            color: #ffffff;
+            color: #0077b5;
             text-decoration: none;
         }
 
@@ -68,168 +68,189 @@
             flex: 1;
             max-width: 1200px;
             margin: 0 auto;
-            padding: 4rem 2rem;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
+            padding: 3rem 2rem;
+            width: 100%;
         }
 
         .hero {
+            text-align: center;
             margin-bottom: 3rem;
         }
 
-        .hero-code {
-            margin-top: 2rem;
-            width: 100%;
-            max-width: 900px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        }
-
-        .hero-code pre {
-            background-color: #0a0a0a;
-            border: 1px solid #333333;
-            border-radius: 8px;
-            padding: 1.5rem;
-            text-align: left;
-            grid-column: 1 / -1;
-        }
-
         h1 {
-            font-size: 3rem;
+            font-size: 2.5rem;
             font-weight: 700;
             margin-bottom: 1rem;
-            background: linear-gradient(to right, #ffffff, #888888);
+            background: linear-gradient(to right, #0077b5, #00a0dc);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
 
         .subtitle {
-            font-size: 1.25rem;
+            font-size: 1.125rem;
             color: #888888;
             margin-bottom: 2rem;
             max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
-        .cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1.5rem;
-            width: 100%;
-            max-width: 900px;
+        .input-section {
+            max-width: 800px;
+            margin: 0 auto 3rem;
         }
 
-        .card {
-            background-color: #111111;
-            border: 1px solid #333333;
-            border-radius: 8px;
-            padding: 1.5rem;
-            transition: all 0.2s ease;
-            text-align: left;
-        }
-
-        .card:hover {
-            border-color: #555555;
-            transform: translateY(-2px);
-        }
-
-        .card h3 {
-            font-size: 1.125rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: #ffffff;
-        }
-
-        .card p {
-            color: #888888;
-            font-size: 0.875rem;
+        .input-group {
+            display: flex;
+            gap: 1rem;
             margin-bottom: 1rem;
         }
 
-        .card a {
-            display: inline-flex;
-            align-items: center;
-            color: #ffffff;
-            text-decoration: none;
-            font-size: 0.875rem;
-            font-weight: 500;
-            padding: 0.5rem 1rem;
-            background-color: #222222;
-            border-radius: 6px;
+        .url-input {
+            flex: 1;
+            background-color: #111111;
             border: 1px solid #333333;
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            font-size: 1rem;
+            color: #ffffff;
+            outline: none;
             transition: all 0.2s ease;
         }
 
-        .card a:hover {
+        .url-input:focus {
+            border-color: #0077b5;
+            box-shadow: 0 0 0 3px rgba(0, 119, 181, 0.2);
+        }
+
+        .url-input::placeholder {
+            color: #666666;
+        }
+
+        .fetch-btn {
+            background-color: #0077b5;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 1rem 2rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .fetch-btn:hover:not(:disabled) {
+            background-color: #006097;
+        }
+
+        .fetch-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .response-section {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .response-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .response-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .copy-btn {
+            background-color: #222222;
+            color: #ffffff;
+            border: 1px solid #333333;
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .copy-btn:hover {
             background-color: #333333;
             border-color: #555555;
         }
 
-        .status-badge {
+        .copy-btn.copied {
+            background-color: #0077b5;
+            border-color: #0077b5;
+        }
+
+        .response-container {
+            background-color: #0a0a0a;
+            border: 1px solid #333333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .response-output {
+            padding: 1.5rem;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #e0e0e0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .response-output.empty {
+            color: #666666;
+            text-align: center;
+            padding: 3rem;
+        }
+
+        .error-message {
+            color: #ff6b6b;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            padding: 3rem;
+            color: #888888;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #333333;
+            border-top-color: #0077b5;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .docs-link {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            background-color: #0070f3;
-            color: #ffffff;
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
+            color: #0077b5;
+            text-decoration: none;
             font-weight: 500;
-            margin-bottom: 2rem;
+            margin-top: 1rem;
         }
 
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            background-color: #00ff88;
-            border-radius: 50%;
-        }
-
-        pre {
-            background-color: #0a0a0a;
-            border: 1px solid #333333;
-            border-radius: 6px;
-            padding: 1rem;
-            overflow-x: auto;
-            margin: 0;
-        }
-
-        code {
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-            font-size: 0.85rem;
-            line-height: 1.5;
-            color: #ffffff;
-        }
-
-        /* Syntax highlighting */
-        .keyword {
-            color: #ff79c6;
-        }
-
-        .string {
-            color: #f1fa8c;
-        }
-
-        .function {
-            color: #50fa7b;
-        }
-
-        .class {
-            color: #8be9fd;
-        }
-
-        .module {
-            color: #8be9fd;
-        }
-
-        .variable {
-            color: #f8f8f2;
-        }
-
-        .decorator {
-            color: #ffb86c;
+        .docs-link:hover {
+            text-decoration: underline;
         }
 
         @media (max-width: 768px) {
@@ -251,12 +272,12 @@
                 font-size: 2rem;
             }
 
-            .hero-code {
-                grid-template-columns: 1fr;
+            .input-group {
+                flex-direction: column;
             }
 
-            .cards {
-                grid-template-columns: 1fr;
+            .fetch-btn {
+                width: 100%;
             }
         }
     </style>
@@ -264,41 +285,131 @@
 <body>
     <header>
         <nav>
-            <a href="/" class="logo">Vercel + FastAPI</a>
+            <a href="/" class="logo">LinkedIn Profile Fetcher</a>
             <div class="nav-links">
-                <a href="/docs">API Docs</a>
-                <a href="/api/v1/items/">API</a>
+                <a href="/docs">API Docs (Swagger)</a>
+                <a href="/redoc">ReDoc</a>
             </div>
         </nav>
     </header>
     <main>
         <div class="hero">
-            <h1>Vercel + FastAPI</h1>
-            <div class="hero-code">
-                <pre><code><span class="keyword">from</span> <span class="module">fastapi</span> <span class="keyword">import</span> <span class="class">FastAPI</span>
-
-<span class="variable">app</span> = <span class="class">FastAPI</span>()
-
-<span class="decorator">@app.get</span>(<span class="string">"/"</span>)
-<span class="keyword">def</span> <span class="function">read_root</span>():
-    <span class="keyword">return</span> {<span class="string">"Python"</span>: <span class="string">"on Vercel"</span>}</code></pre>
-            </div>
+            <h1>LinkedIn Profile Fetcher</h1>
+            <p class="subtitle">Enter a LinkedIn profile URL to fetch structured profile data including name, headline, about, experience, and education.</p>
         </div>
 
-        <div class="cards">
-            <div class="card">
-                <h3>Interactive API Docs</h3>
-                <p>Explore this API's endpoints with the interactive Swagger UI. Test requests and view response schemas in real-time.</p>
-                <a href="/docs">Open Swagger UI →</a>
+        <div class="input-section">
+            <div class="input-group">
+                <input 
+                    type="url" 
+                    class="url-input" 
+                    id="urlInput" 
+                    placeholder="https://linkedin.com/in/username"
+                    value="https://linkedin.com/in/amit0617"
+                >
+                <button class="fetch-btn" id="fetchBtn">Fetch Profile</button>
             </div>
+            <a href="/docs" class="docs-link">← View Interactive API Docs (Swagger UI)</a>
+        </div>
 
-            <div class="card">
-                <h3>Sample Data</h3>
-                <p>Access sample JSON data through our REST API. Perfect for testing and development purposes.</p>
-                <a href="/api/v1/items/">Get Data →</a>
+        <div class="response-section">
+            <div class="response-header">
+                <h2>Response</h2>
+                <button class="copy-btn" id="copyBtn" disabled>Copy JSON</button>
             </div>
-
+            <div class="response-container">
+                <div class="response-output empty" id="responseOutput">
+                    Enter a LinkedIn URL and click "Fetch Profile" to see the JSON response here.
+                </div>
+            </div>
         </div>
     </main>
+
+    <script>
+        const urlInput = document.getElementById('urlInput');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const responseOutput = document.getElementById('responseOutput');
+        const copyBtn = document.getElementById('copyBtn');
+
+        let lastResponse = null;
+
+        async function fetchProfile() {
+            const url = urlInput.value.trim();
+            if (!url) {
+                alert('Please enter a LinkedIn profile URL');
+                return;
+            }
+
+            fetchBtn.disabled = true;
+            fetchBtn.textContent = 'Fetching...';
+            responseOutput.className = 'response-output loading';
+            responseOutput.innerHTML = '<div class="spinner"></div>Fetching profile data...';
+            copyBtn.disabled = true;
+            copyBtn.textContent = 'Copy JSON';
+
+            try {
+                const response = await fetch('/api/v1/linkedin/profile', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || `HTTP error ${response.status}`);
+                }
+
+                lastResponse = data;
+                displayResponse(data);
+                copyBtn.disabled = false;
+            } catch (error) {
+                displayError(error.message);
+            } finally {
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = 'Fetch Profile';
+            }
+        }
+
+        function displayResponse(data) {
+            responseOutput.className = 'response-output';
+            responseOutput.textContent = JSON.stringify(data, null, 2);
+        }
+
+        function displayError(message) {
+            responseOutput.className = 'response-output error-message';
+            responseOutput.textContent = `Error: ${message}`;
+            lastResponse = null;
+        }
+
+        function copyToClipboard() {
+            if (!lastResponse) return;
+
+            navigator.clipboard.writeText(JSON.stringify(lastResponse, null, 2)).then(() => {
+                copyBtn.textContent = 'Copied!';
+                copyBtn.classList.add('copied');
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy JSON';
+                    copyBtn.classList.remove('copied');
+                }, 2000);
+            }).catch(() => {
+                copyBtn.textContent = 'Failed to copy';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy JSON';
+                }, 2000);
+            });
+        }
+
+        fetchBtn.addEventListener('click', fetchProfile);
+        copyBtn.addEventListener('click', copyToClipboard);
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                fetchProfile();
+            }
+        });
+    </script>
 </body>
 </html>
