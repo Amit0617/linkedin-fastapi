@@ -7,7 +7,6 @@ from app.core.config import get_cookies, ConfigError, DEFAULT_VIEWEE_PROFILE_ID
 from app.services.fetcher import (
     parse_vanity_name,
     fetch_profile_html,
-    extract_viewee_profile_id,
     fetch_all_components,
     FetchError,
 )
@@ -18,12 +17,11 @@ from app.parsers import (
     parse_education_content,
 )
 
-router = APIRouter(prefix="/py", tags=["linkedin"])
+router = APIRouter(prefix= "/linkedin", tags=["linkedin"])
 
 
 class ProfileRequest(BaseModel):
     url: HttpUrl
-    # viewee_profile_id: Optional[str] = None
 
 
 @router.get("/health")
@@ -64,7 +62,7 @@ def get_profile(payload: ProfileRequest):
     education = parse_education_content(components["education"])
 
     return {
-        "input_url": url,
+        # "input_url": url,
         "vanity_name": vanity_name,
         "profile": top_card.model_dump(),
         "about": about,

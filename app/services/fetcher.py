@@ -69,28 +69,6 @@ def fetch_profile_html(vanity_name: str, cookies: Dict[str, str]) -> str:
     return response.text
 
 
-def extract_viewee_profile_id(html: str) -> Optional[str]:
-    """Best-effort extraction of the internal member urn ('vieweeProfileId')
-    LinkedIn's RSC action endpoint expects, out of the profile page HTML.
-
-    LinkedIn doesn't document this; the patterns below are based on common
-    shapes of the embedded JSON on the profile page and may need updating
-    if LinkedIn changes their markup. If this fails, pass
-    `viewee_profile_id` explicitly in the API request body instead.
-    """
-    patterns = [
-        r'dashEntityUrn\\":\\"urn:li:fsd_profile:([^"\\]+)\\"',
-        r'entityUrn\\":\\"urn:li:fs_profile:([^"\\]+)\\"',
-        r'"vieweeProfileId\\":\\"([^"\\]+)\\"',
-        r'urn:li:member:(\d+)',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, html)
-        if match:
-            return match.group(1)
-    return None
-
-
 def _build_payload(vanity_name: str, viewee_profile_id: str) -> Dict[str, Any]:
     def binding(key: str) -> Dict[str, Any]:
         return {
