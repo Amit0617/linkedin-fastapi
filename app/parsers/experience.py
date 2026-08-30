@@ -1,10 +1,17 @@
-import json
+"""Parses the 'about' and 'experience' sections out of LinkedIn's
+profileCardsAboveActivity / profileCardsExperienceOnly RSC responses.
+
+This is a light refactor of the original parse_profile.py: the parsing
+logic is unchanged, it's just been adapted to operate on an already-fetched
+response string (parse_*_content) instead of reading a file from disk.
+File-based entrypoints are kept for local testing / backwards compatibility.
+"""
 import re
-import re
-import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel
+
+from .common import parse_rsc_content, parse_rsc_file, extract_plain_text
 
 
 class Experience(BaseModel):
@@ -25,17 +32,15 @@ def extract_start_date(duration: Optional[str]) -> datetime:
     """Extract start date from duration string for sorting."""
     if not duration:
         return datetime(1900, 1, 1)
-    
-    # Try to extract date like "Jan 2025", "Jul 2023", etc.
+
     match = re.search(r'(\w+)\s+(\d{4})', duration)
     if match:
         month_str, year_str = match.groups()
         try:
-            dt = datetime.strptime(f"{month_str} {year_str}", "%b %Y")
-            return dt
+            return datetime.strptime(f"{month_str} {year_str}", "%b %Y")
         except ValueError:
             pass
-    
+
     return datetime(1900, 1, 1)
 
 
@@ -43,76 +48,42 @@ def extract_end_date(duration: Optional[str]) -> datetime:
     """Extract end date from duration string for sorting (most recent first)."""
     if not duration:
         return datetime(1900, 1, 1)
-    
-    # Handle "Present" as the most recent (use a future date)
+
     if "Present" in duration:
         return datetime(2099, 12, 31)
-    
-    # Try to extract the second date (end date) like "Jul 2023 - Oct 2023"
-    # Split by " - " and get the second part
+
     parts = duration.split(" - ")
     if len(parts) >= 2:
-        end_part = parts[1]  # e.g., "Oct 2023 · 4 mos"
+        end_part = parts[1]
         match = re.search(r'(\w+)\s+(\d{4})', end_part)
         if match:
             month_str, year_str = match.groups()
             try:
-                dt = datetime.strptime(f"{month_str} {year_str}", "%b %Y")
-                return dt
+                return datetime.strptime(f"{month_str} {year_str}", "%b %Y")
             except ValueError:
                 pass
-    
+
     return datetime(1900, 1, 1)
-
-
-
-def parse_rsc_file(filepath: str) -> tuple:
-    """Parse RSC file into dict of nodes and line numbers."""
-    with open(filepath, 'r') as f:
-        content = f.read()
-    
-    lines = content.strip().split('\n')
-    nodes = {}
-    line_numbers = {}
-    
-    for i, line in enumerate(lines):
-        if not line.strip():
-            continue
-        match = re.match(r'^([0-9a-f]+):(.+)$', line.strip())
-        if not match:
-            continue
-        key, value = match.groups()
-        
-        if value.startswith('I['):
-            continue
-        elif value.startswith('['):
-            try:
-                parsed = json.loads(value)
-                nodes[key] = parsed
-                line_numbers[key] = i
-            except json.JSONDecodeError:
-                pass
-    
-    return nodes, line_numbers
 
 
 def get_initial_items_order(nodes: Dict) -> List[Dict]:
     """Get the visual order of experiences from initialItems in node 'e'."""
     if 'e' not in nodes:
         return []
-    
+
     node = nodes['e']
     if not isinstance(node, list) or len(node) < 4:
         return []
-    
+
     initial_items = node[3].get('initialItems', [])
     ordered_items = []
-    
+
     for item in initial_items:
         comp_key = item.get('key')
         comp = item.get('item', [])
-        
+
         l_refs = []
+
         def find_lrefs(n):
             if isinstance(n, list):
                 for x in n:
@@ -122,35 +93,11 @@ def get_initial_items_order(nodes: Dict) -> List[Dict]:
                     find_lrefs(v)
             elif isinstance(n, str) and n.startswith('$L'):
                 l_refs.append(n)
-        
+
         find_lrefs(comp)
-        ordered_items.append({
-            'entity_id': comp_key,
-            'l_refs': l_refs
-        })
-    
+        ordered_items.append({'entity_id': comp_key, 'l_refs': l_refs})
+
     return ordered_items
-
-
-def find_skill_link_node(nodes: Dict, l_refs: List[str]) -> Optional[Dict]:
-    """Find the skill link node ($L ref that has skill-associations-details URL)."""
-    for l_ref in l_refs:
-        key = l_ref[2:]
-        if key in nodes:
-            node = nodes[key]
-            node_str = json.dumps(node)
-            if 'skill-associations-details' in node_str:
-                return {'key': key, 'node': node}
-    return None
-
-
-def extract_position_id(node: Dict) -> Optional[str]:
-    """Extract position ID from skill link node."""
-    node_str = json.dumps(node)
-    match = re.search(r'/overlay/(\d+)/skill-associations-details', node_str)
-    if match:
-        return match.group(1)
-    return None
 
 
 def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]:
@@ -164,34 +111,34 @@ def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]
         'descriptions': [],
         'skill_links': [],
     }
-    
+
     for key, node in nodes.items():
         if not isinstance(node, list) or len(node) < 4:
             continue
-        
+
         line_num = line_numbers.get(key, 0)
         props = node[3] if isinstance(node[3], dict) else {}
         class_name = props.get('className', '')
         children = props.get('children', '')
-        
+
         if node[1] == 'p' and 'c2d1c236' in class_name and '_61558a10' not in class_name:
             if isinstance(children, list) and children:
                 text = children[0] if isinstance(children[0], str) else ''
                 if text and len(text) < 150:
                     content['titles'].append({'key': key, 'text': text, 'line': line_num})
-        
-        node_str = json.dumps(node)
+
+        node_str = json_dumps_safe(node)
         if node[1] == 'p' and 'skill-associations-details' in node_str:
             match = re.search(r'/overlay/(\d+)/skill-associations-details', node_str)
             position_id = match.group(1) if match else None
             content['skill_links'].append({'key': key, 'position_id': position_id, 'line': line_num, 'node': node})
-        
+
         elif node[1] == 'p' and '_61558a10' in class_name and '_1736033f' in class_name and 'c2d1c236' not in class_name:
             if isinstance(children, list) and children:
                 text = children[0] if isinstance(children[0], str) else ''
                 if text and " · " in text:
                     content['companies'].append({'key': key, 'text': text, 'line': line_num})
-        
+
         elif node[1] == '$Lf' and props.get('textColorExpression') == 176:
             text_props = props.get('textProps', {})
             text_children = text_props.get('children', '')
@@ -199,7 +146,7 @@ def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]
                 text = text_children[0] if isinstance(text_children[0], str) else ''
                 if text and text.strip():
                     content['employment_types'].append({'key': key, 'text': text.strip(), 'line': line_num})
-        
+
         elif node[1] == '$Lf' and props.get('textColorExpression') == 179:
             text_props = props.get('textProps', {})
             text_children = text_props.get('children', '')
@@ -209,30 +156,35 @@ def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]
                     content['durations'].append({'key': key, 'text': text, 'line': line_num})
                 else:
                     content['locations'].append({'key': key, 'text': text, 'line': line_num})
-        
+
         elif node[1] in ('$L43', '$L51', '$L42', '$L44', '$L3c') and 'textProps' in props:
             content['descriptions'].append({'key': key, 'node': node, 'line': line_num})
-    
+
     for field_type in content:
         content[field_type].sort(key=lambda x: x['line'])
-    
+
     return content
+
+
+def json_dumps_safe(node: Any) -> str:
+    import json
+    return json.dumps(node)
 
 
 def extract_description_text(node: Dict) -> str:
     """Extract description text from expandable text node ($L43, $L51, etc)."""
     if not isinstance(node, list) or len(node) < 4:
         return ""
-    
+
     props = node[3]
     if not isinstance(props, dict) or 'textProps' not in props:
         return ""
-    
+
     text_props = props['textProps']
     children = text_props.get('children', [])
     desc_lines = []
     seen = set()
-    
+
     def extract(ch):
         if isinstance(ch, list):
             for item in ch:
@@ -252,7 +204,7 @@ def extract_description_text(node: Dict) -> str:
                     elif len(ch) > 30 and not any(kw in ch.lower() for kw in ['skill', 'association', 'overlay', 'credential', 'issued', 'text-attr']):
                         desc_lines.append(normalized)
                         seen.add(normalized)
-    
+
     extract(children)
     return "\n".join(desc_lines)
 
@@ -287,7 +239,6 @@ def group_content_by_experience(content: Dict) -> List[Dict]:
 
         has_duration = any(title_line <= d['line'] < next_title_line for d in content['durations'])
         has_employment = any(title_line <= et['line'] < next_title_line for et in employment_types)
-        has_location = any(title_line <= l['line'] < next_title_line for l in content['locations'])
 
         is_company_header = (
             len(title['text'].split()) <= 2 and
@@ -304,7 +255,6 @@ def group_content_by_experience(content: Dict) -> List[Dict]:
             next_has_location = any(next_title['line'] <= l['line'] < next_next_line for l in content['locations'])
             next_has_role_metadata = next_has_duration or next_has_employment or next_has_location
             if (not has_duration and not has_employment and next_has_role_metadata) or is_company_header:
-                # This is a company header immediately preceding the real role block.
                 current_company_name = title['text'].strip()
                 continue
 
@@ -369,37 +319,31 @@ def group_content_by_experience(content: Dict) -> List[Dict]:
                 block['position_id'] = f'pos_{i}'
 
     pos_id_to_visual_idx = {pid: idx for idx, pid in enumerate(visual_pos_ids)}
-    
-    # Reorder blocks by visual index first
+
     blocks_with_pos = [b for b in blocks if 'position_id' in b]
     blocks_with_pos.sort(key=lambda b: pos_id_to_visual_idx.get(b['position_id'], 999))
-    
-    # Match descriptions to blocks by line range, collecting all matches
+
     block_descs = {i: [] for i in range(len(blocks_with_pos))}
     for desc in content['descriptions']:
         for i, block in enumerate(blocks_with_pos):
             if block['start_line'] <= desc['line'] < block['end_line']:
                 block_descs[i].append(desc)
                 break
-    
-    # Redistribute: blocks with multiple descriptions give extras to previous blocks with none
+
     for i in range(len(blocks_with_pos)):
         while len(block_descs[i]) > 1:
             extra = block_descs[i].pop()
-            # Find previous block with no description
             for j in range(i - 1, -1, -1):
                 if len(block_descs[j]) == 0:
                     block_descs[j].append(extra)
                     break
-    
-    # Assign first description to each block
+
     for i, block in enumerate(blocks_with_pos):
         if block_descs[i]:
             block['description'] = block_descs[i][0]
 
     groups = []
     for i, block in enumerate(blocks_with_pos):
-        skill_link = None
         if i < len(skill_links):
             skill_link = skill_links[i]
         else:
@@ -421,7 +365,7 @@ def extract_about_section(nodes: Dict, line_numbers: Dict) -> Optional[str]:
     """Extract the About section text from profile cards above activity."""
     about_text_parts = []
     seen = set()
-    
+
     about_header_line = None
     for key, node in nodes.items():
         if not isinstance(node, list) or len(node) < 4:
@@ -429,24 +373,24 @@ def extract_about_section(nodes: Dict, line_numbers: Dict) -> Optional[str]:
         props = node[3] if isinstance(node[3], dict) else {}
         text_props = props.get('textProps', {})
         children = text_props.get('children', [])
-        # Check if this is an About header (h2 tag with "About" text)
         if (node[1] in ('h2', '$L20', '$L16') or text_props.get('tagName') == 'h2') and children:
-            # Check if children contains "About"
             child_texts = []
+
             def get_texts(ch):
                 if isinstance(ch, list):
                     for item in ch:
                         get_texts(item)
                 elif isinstance(ch, str):
                     child_texts.append(ch)
+
             get_texts(children)
             if any('About' in t for t in child_texts):
                 about_header_line = line_numbers.get(key, 0)
                 break
-    
+
     if about_header_line is None:
         return None
-    
+
     candidate_nodes = []
     for key, node in nodes.items():
         if not isinstance(node, list) or len(node) < 4:
@@ -459,17 +403,16 @@ def extract_about_section(nodes: Dict, line_numbers: Dict) -> Optional[str]:
             text_props = props['textProps']
             children = text_props.get('children', [])
             if children:
-                text_preview = json.dumps(children)[:200]
                 if 'lineClamp' in str(props) or 'expandable_text_block' in str(props):
                     candidate_nodes.append((line_num, key, node))
-    
+
     candidate_nodes.sort(key=lambda x: x[0])
-    
+
     for _, key, node in candidate_nodes[:1]:
         props = node[3] if isinstance(node[3], dict) else {}
         text_props = props.get('textProps', {})
         children = text_props.get('children', [])
-        
+
         def extract_text(ch):
             if isinstance(ch, list):
                 for item in ch:
@@ -485,23 +428,40 @@ def extract_about_section(nodes: Dict, line_numbers: Dict) -> Optional[str]:
                     if normalized and len(normalized) > 3 and normalized not in seen:
                         seen.add(normalized)
                         about_text_parts.append(normalized)
-        
+
         extract_text(children)
-    
+
     if about_text_parts:
         text = " ".join(about_text_parts)
         text = re.sub(r'\s+', ' ', text).strip()
         return text
-    
+
     return None
 
 
-def parse_experience_file(filepath: str) -> List[Experience]:
-    """Parse experience from component_profileCardsExperienceOnly.json"""
-    nodes, line_numbers = parse_rsc_file(filepath)
-    content = find_content_nodes(nodes, line_numbers)
-    groups = group_content_by_experience(content)
-    
+def _line_numbers_from_content(content: str) -> Dict[str, int]:
+    """Rebuild the key -> line-number map alongside parse_rsc_content."""
+    line_numbers = {}
+    lines = content.strip().split('\n')
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        match = re.match(r'^([0-9a-f]+):(.+)$', line.strip())
+        if not match:
+            continue
+        key, value = match.groups()
+        if value.startswith('['):
+            line_numbers[key] = i
+    return line_numbers
+
+
+def parse_experience_content(content: str) -> List[Experience]:
+    """Parse experiences from a profileCardsExperienceOnly RSC response string."""
+    nodes = parse_rsc_content(content)
+    line_numbers = _line_numbers_from_content(content)
+    content_nodes = find_content_nodes(nodes, line_numbers)
+    groups = group_content_by_experience(content_nodes)
+
     experiences = []
     for g in groups:
         title = (g['title']['text'] if g['title'] else "").strip()
@@ -510,8 +470,7 @@ def parse_experience_file(filepath: str) -> List[Experience]:
         location = g['location']['text'] if g['location'] else ""
         employment_type = g['employment_type']['text'] if g.get('employment_type') else ""
         description = extract_description_text(g['description']['node']) if g['description'] else ""
-        
-        # Handle embedded employment type in company text (format: "Company · Employment Type")
+
         if " · " in company_text and not employment_type:
             parts = company_text.split(" · ")
             if len(parts) == 2:
@@ -520,14 +479,12 @@ def parse_experience_file(filepath: str) -> List[Experience]:
 
         if title and company_text and title.strip().lower() == company_text.strip().lower():
             continue
-        
-        company = ""
+
         if " · " in company_text:
-            parts = company_text.split(" · ")
-            company = parts[0].strip()
+            company = company_text.split(" · ")[0].strip()
         else:
             company = company_text
-        
+
         exp = Experience(
             title=title or "Unknown Title",
             company=company or "Unknown Company",
@@ -537,52 +494,25 @@ def parse_experience_file(filepath: str) -> List[Experience]:
             employment_type=employment_type or None
         )
         experiences.append(exp)
-    
-    # Sort by end date in reverse chronological order (most recent end first, with "Present" first)
+
     experiences.sort(key=lambda e: extract_end_date(e.duration), reverse=True)
-    
     return experiences
 
 
-def parse_about_file(filepath: str) -> Optional[str]:
-    """Parse about section from component_profileCardsAboveActivity.json"""
-    nodes, line_numbers = parse_rsc_file(filepath)
+def parse_about_content(content: str) -> Optional[str]:
+    """Parse the About section from a profileCardsAboveActivity RSC response string."""
+    nodes = parse_rsc_content(content)
+    line_numbers = _line_numbers_from_content(content)
     return extract_about_section(nodes, line_numbers)
 
 
-def main():
-    experience_file = "/home/amit/codelib/tross/linkedin-fastapi/component_profileCardsExperienceOnly.json"
-    about_file = "/home/amit/codelib/tross/linkedin-fastapi/component_profileCardsAboveActivity.json"
-    
-    print("=== Parsing Experiences ===\n")
-    experiences = parse_experience_file(experience_file)
-    
-    for i, exp in enumerate(experiences, 1):
-        print(f"Experience {i}:")
-        print(f"  Title: {exp.title}")
-        print(f"  Company: {exp.company}")
-        print(f"  Location: {exp.location}")
-        print(f"  Duration: {exp.duration}")
-        print(f"  Employment Type: {exp.employment_type}")
-        print(f"  Description: {exp.description[:200] if exp.description else 'None'}...")
-        print()
-    
-    print("\n=== Parsing About Section ===\n")
-    about = parse_about_file(about_file)
-    print(f"About: {about}")
-    
-    profile = Profile(about=about, experiences=experiences)
-    
-    output = {
-        "about": profile.about,
-        "experiences": [exp.model_dump() for exp in profile.experiences]
-    }
-    
-    with open("/home/amit/codelib/tross/linkedin-fastapi/parsed_profile.json", "w") as f:
-        json.dump(output, f, indent=2)
-    
-    print("\n=== Saved to parsed_profile.json ===")
+# --- File-based entrypoints (kept for local testing / backwards compat) ---
+
+def parse_experience_file(filepath: str) -> List[Experience]:
+    with open(filepath, 'r') as f:
+        return parse_experience_content(f.read())
 
 
-if __name__ == "__main__":
-    main()
+def parse_about_file(filepath: str) -> Optional[str]:
+    with open(filepath, 'r') as f:
+        return parse_about_content(f.read())
