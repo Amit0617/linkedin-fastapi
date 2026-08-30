@@ -1,67 +1,101 @@
-# FastAPI Starter
+# LinkedIn Profile API
 
-Deploy your [FastAPI](https://fastapi.tiangolo.com/) project to Vercel with zero configuration.
+A FastAPI service, structured like [Vercel's FastAPI example](https://github.com/vercel/vercel/tree/main/examples/fastapi), that takes a LinkedIn profile URL and returns a merged JSON document with top-card info, about, experience, and education -- fetched live from LinkedIn and parsed from its internal RSC ("React Server Components") responses.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/vercel/vercel/tree/main/examples/fastapi&template=fastapi)
-
-_Live Example: https://vercel-plus-fastapi.vercel.app/_
-
-Visit the [FastAPI documentation](https://fastapi.tiangolo.com/) to learn more.
-
-## Project Structure
-
-This example follows the [larger applications](https://fastapi.tiangolo.com/tutorial/bigger-applications/) pattern from the FastAPI docs:
+## Project layout
 
 ```
 app/
-├── __init__.py
-├── main.py              # FastAPI application entry point
-├── templates/
-│   └── index.html       # Landing page template
-├── api/
-│   ├── __init__.py
-│   ├── main.py          # API router assembly
-│   ├── deps.py          # Shared dependencies
-│   └── routes/
-│       ├── __init__.py
-│       └── items.py     # Item endpoints
-└── core/
-    ├── __init__.py
-    └── config.py        # Application settings
+  __init__.py
+  api/
+    __init__.py
+    main.py           <- API router (includes all route modules)
+    routes/
+      __init__.py
+      linkedin.py     <- LinkedIn profile endpoint
+  core/
+    __init__.py
+    config.py         <- settings & env var loading
+  main.py             <- FastAPI app factory
+  parsers/
+    __init__.py
+    common.py         <- shared RSC parsing helpers
+    experience.py     <- about + experience parsing
+    education.py      <- education parsing
+    top_card.py       <- name/headline/location from HTML
+  services/
+    __init__.py
+    fetcher.py        <- fetches profile HTML + RSC component payloads
+  templates/
+    index.html        <- landing page
+public/
+  favicon.ico
+pyproject.toml
+.env.example
 ```
 
-## Getting Started
+## How it works
 
-Install the required dependencies using [uv](https://docs.astral.sh/uv/):
+1. `POST /api/v1/linkedin/profile` with `{"url": "https://www.linkedin.com/in/<vanity>/"}`.
+2. The server:
+   - Fetches the plain profile page HTML to pull top-card info (name, headline, location) and LinkedIn's internal member id.
+   - Fetches three internal SDUI/RSC component payloads (About, Experience, Education-and-below) the same way the LinkedIn web app does.
+   - Parses each payload with the corresponding parser and merges everything into one JSON response.
+
+
+## Running locally
 
 ```bash
-uv sync
+uv pip install -r pyproject.toml
+
+cp .env.example .env   # fill in your cookies
+
+uvicorn app.main:app --reload --port 8000
 ```
 
-## Running Locally
+Then:
 
 ```bash
-vercel dev
+curl -X POST http://localhost:8000/api/v1/linkedin/profile \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.linkedin.com/in/username/"}'
 ```
 
-## API Endpoints
+## Response shape
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | Landing page |
-| `GET` | `/api/v1/items/` | List sample items |
-| `GET` | `/api/v1/items/{item_id}` | Get item by ID |
-| `GET` | `/docs` | Interactive API docs (Swagger UI) |
-
-## Deploying to Vercel
-
-Deploy your project to Vercel with the following command:
-
-```bash
-npm install -g vercel
-vercel --prod
+```json
+{
+  "vanity_name": "...",
+  "profile": {
+    "full_name": "...",
+    "headline": "...",
+    "location": "...",
+    "profile_canonical_url": "..."
+  },
+  "about": "...",
+  "experiences": [
+    {
+      "title": "...",
+      "company": "...",
+      "location": "...",
+      "duration": "...",
+      "description": "...",
+      "employment_type": "..."
+    }
+  ],
+  "education": [
+    {
+      "school": "...",
+      "degree": "...",
+      "field_of_study": "...",
+      "duration": "...",
+      "grade": "...",
+      "activities_and_societies": "..."
+    }
+  ]
+}
 ```
 
-Or `git push` to your repository with our [git integration](https://vercel.com/docs/deployments/git).
+## Caveats
 
-To view the source code for this template, [visit the example repository](https://github.com/vercel/vercel/tree/main/examples/fastapi).
+- This scrapes LinkedIn's private, undocumented internal API. It can break at any time if LinkedIn changes their markup, component ids, or anti-bot measures, and heavy use risks the logged-in account being rate-limited or flagged.
