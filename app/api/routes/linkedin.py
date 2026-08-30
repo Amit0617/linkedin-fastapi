@@ -21,7 +21,7 @@ router = APIRouter(prefix= "/linkedin", tags=["linkedin"])
 
 
 class ProfileRequest(BaseModel):
-    url: HttpUrl
+    url: HttpUrl = "https://linkedin.com/in/amit0617"
 
 
 @router.get("/health")
