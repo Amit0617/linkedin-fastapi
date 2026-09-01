@@ -9,6 +9,7 @@ to be called from a request handler (returns data in memory) instead of a
 CLI script (which wrote files to disk).
 """
 import base64
+import codecs
 import json
 import os
 import re
@@ -18,6 +19,25 @@ import requests
 from curl_cffi import requests as curl_requests
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0"
+
+
+def _cp1252_fallback(exc: UnicodeDecodeError):
+    """Error handler for decode('utf-8', errors='cp1252_fallback').
+
+    LinkedIn's RSC action-endpoint responses are UTF-8, but certain
+    punctuation (notably the middle-dot separator in "Company · Full-time"
+    and "Jan 2004 - Jul 2010 · 6 yrs 7 mos") sometimes comes through as a
+    single raw CP-1252/Latin-1 byte (0xB7) instead of the correct 2-byte
+    UTF-8 sequence (0xC2 0xB7). Plain `errors="ignore"` drops that byte
+    entirely, which silently deletes the "·" and breaks every downstream
+    " · " split (company vs employment type, duration parsing, etc).
+    This handler recovers the intended character instead of discarding it.
+    """
+    bad_byte = exc.object[exc.start:exc.start + 1]
+    return bad_byte.decode("cp1252", errors="replace"), exc.start + 1
+
+
+codecs.register_error("cp1252_fallback", _cp1252_fallback)
 
 # The three profile cards we need, and the internal SDUI component ids that
 # back them (see fetch_component_fixed.py for how these were captured).
@@ -186,7 +206,7 @@ def fetch_component(
             response.status_code,
         )
 
-    return response.content.decode("utf-8", errors="ignore")
+    return response.content.decode("utf-8", errors="cp1252_fallback")
 
 
 def fetch_all_components(vanity_name: str, viewee_profile_id: str, cookies: Dict[str, str]) -> Dict[str, str]:

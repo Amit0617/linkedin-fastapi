@@ -121,23 +121,29 @@ def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]
         class_name = props.get('className', '')
         children = props.get('children', '')
 
-        if node[1] == 'p' and 'c2d1c236' in class_name and '_61558a10' not in class_name:
-            if isinstance(children, list) and children:
-                text = children[0] if isinstance(children[0], str) else ''
-                if text and len(text) < 150:
-                    content['titles'].append({'key': key, 'text': text, 'line': line_num})
-
         node_str = json_dumps_safe(node)
+
         if node[1] == 'p' and 'skill-associations-details' in node_str:
             match = re.search(r'/overlay/(\d+)/skill-associations-details', node_str)
             position_id = match.group(1) if match else None
             content['skill_links'].append({'key': key, 'position_id': position_id, 'line': line_num, 'node': node})
 
-        elif node[1] == 'p' and '_61558a10' in class_name and '_1736033f' in class_name and 'c2d1c236' not in class_name:
+        elif node[1] == 'p':
+            # NOTE: we intentionally don't match on specific className hashes
+            # here (e.g. the old 'c2d1c236' / '_61558a10' selectors). Those are
+            # atomic-CSS classes that LinkedIn regenerates on every deploy, so
+            # any hardcoded hash rots the next time their frontend rebuilds.
+            #
+            # Instead we use a structural signal that's stable across builds:
+            # the position *title* <p> always carries an inline `style` dict
+            # (for line-clamp/truncation), while the *company* <p> never does.
             if isinstance(children, list) and children:
                 text = children[0] if isinstance(children[0], str) else ''
-                if text and " · " in text:
-                    content['companies'].append({'key': key, 'text': text, 'line': line_num})
+                if text and len(text) < 150:
+                    if 'style' in props:
+                        content['titles'].append({'key': key, 'text': text, 'line': line_num})
+                    else:
+                        content['companies'].append({'key': key, 'text': text, 'line': line_num})
 
         elif node[1] == '$Lf' and props.get('textColorExpression') == 176:
             text_props = props.get('textProps', {})
@@ -215,7 +221,6 @@ def group_content_by_experience(content: Dict) -> List[Dict]:
     companies = content['companies']
     employment_types = content['employment_types']
     skill_links = sorted(content['skill_links'], key=lambda s: s['line'])
-
     blocks = []
     current_company_name = None
 
@@ -296,6 +301,9 @@ def group_content_by_experience(content: Dict) -> List[Dict]:
 
     visual_pos_ids = [sl['position_id'] for sl in skill_links]
     if not skill_links:
+        for i, block in enumerate(blocks):
+            block['position_id'] = f'pos_{i}'
+    elif not blocks:
         for i, block in enumerate(blocks):
             block['position_id'] = f'pos_{i}'
     elif skill_links[0]['line'] < blocks[0]['start_line']:
