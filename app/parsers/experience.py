@@ -100,6 +100,58 @@ def get_initial_items_order(nodes: Dict) -> List[Dict]:
     return ordered_items
 
 
+def _iter_dom_nodes(node: Any, base_line: float):
+    """Recursively walk a parsed RSC node's full subtree, yielding every
+    ["$", tag, key, props] element found (including `node` itself) together
+    with a synthetic line number that preserves document order.
+
+    This exists because LinkedIn's RSC streaming doesn't reliably give every
+    visual element its own addressable top-level key. Sometimes an entire
+    section (all its title/company/duration paragraphs) is nested many
+    levels deep inside a single top-level reference instead of being split
+    out. A parser that only inspects nodes.items() at the top level will
+    silently find nothing in that case. Walking the whole subtree fixes
+    this regardless of how deeply LinkedIn happens to nest things on a given
+    request.
+
+    `base_line` anchors this top-level entry's position in the overall
+    document; the fractional offset added per visited node preserves the
+    original DFS (i.e. visual) order of nested elements relative to each
+    other and relative to other top-level entries, without needing real
+    line numbers for the nested content.
+    """
+    counter = [0]
+
+    def rec(n):
+        if isinstance(n, list):
+            if len(n) >= 4 and n[0] == '$' and isinstance(n[3], dict):
+                counter[0] += 1
+                yield n, base_line + counter[0] / 1_000_000
+            for x in n:
+                yield from rec(x)
+        elif isinstance(n, dict):
+            for v in n.values():
+                yield from rec(v)
+
+    yield from rec(node)
+
+
+def _flatten_all_nodes(nodes: Dict, line_numbers: Dict) -> List[Any]:
+    """Flatten every top-level RSC entry's full subtree into a single
+    (node, synthetic_line) list, in document order. See _iter_dom_nodes for
+    why this full-tree walk is necessary rather than only inspecting
+    nodes.items() at the top level.
+    """
+    flat = []
+    for key, top_node in nodes.items():
+        if not isinstance(top_node, list) or len(top_node) < 4:
+            continue
+        base_line = line_numbers.get(key, 0)
+        flat.extend(_iter_dom_nodes(top_node, base_line))
+    flat.sort(key=lambda x: x[1])
+    return flat
+
+
 def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]:
     """Find all content nodes grouped by type with their line numbers."""
     content = {
@@ -112,59 +164,86 @@ def find_content_nodes(nodes: Dict, line_numbers: Dict) -> Dict[str, List[Dict]]
         'skill_links': [],
     }
 
-    for key, node in nodes.items():
-        if not isinstance(node, list) or len(node) < 4:
+    for key, top_node in nodes.items():
+        if not isinstance(top_node, list) or len(top_node) < 4:
             continue
 
-        line_num = line_numbers.get(key, 0)
-        props = node[3] if isinstance(node[3], dict) else {}
-        class_name = props.get('className', '')
-        children = props.get('children', '')
+        base_line = line_numbers.get(key, 0)
 
-        node_str = json_dumps_safe(node)
+        for node, line_num in _iter_dom_nodes(top_node, base_line):
+            props = node[3] if isinstance(node[3], dict) else {}
+            children = props.get('children', '')
 
-        if node[1] == 'p' and 'skill-associations-details' in node_str:
-            match = re.search(r'/overlay/(\d+)/skill-associations-details', node_str)
-            position_id = match.group(1) if match else None
-            content['skill_links'].append({'key': key, 'position_id': position_id, 'line': line_num, 'node': node})
+            node_str = json_dumps_safe(node)
 
-        elif node[1] == 'p':
-            # NOTE: we intentionally don't match on specific className hashes
-            # here (e.g. the old 'c2d1c236' / '_61558a10' selectors). Those are
-            # atomic-CSS classes that LinkedIn regenerates on every deploy, so
-            # any hardcoded hash rots the next time their frontend rebuilds.
-            #
-            # Instead we use a structural signal that's stable across builds:
-            # the position *title* <p> always carries an inline `style` dict
-            # (for line-clamp/truncation), while the *company* <p> never does.
-            if isinstance(children, list) and children:
-                text = children[0] if isinstance(children[0], str) else ''
-                if text and len(text) < 150:
-                    if 'style' in props:
-                        content['titles'].append({'key': key, 'text': text, 'line': line_num})
+            if node[1] == 'p' and 'skill-associations-details' in node_str:
+                match = re.search(r'/overlay/(\d+)/skill-associations-details', node_str)
+                position_id = match.group(1) if match else None
+                content['skill_links'].append({'key': key, 'position_id': position_id, 'line': line_num, 'node': node})
+
+            elif node[1] == 'p':
+                # NOTE: we intentionally don't match on specific className hashes
+                # here (e.g. the old 'c2d1c236' / '_61558a10' selectors). Those are
+                # atomic-CSS classes that LinkedIn regenerates on every deploy, so
+                # any hardcoded hash rots the next time their frontend rebuilds.
+                #
+                # Instead we use a structural signal that's stable across builds:
+                # the position *title* <p> always carries an inline `style` dict
+                # (for line-clamp/truncation), while the *company* <p> never does.
+                if isinstance(children, list) and children:
+                    text = children[0] if isinstance(children[0], str) else ''
+                    if text and len(text) < 150:
+                        if 'style' in props:
+                            content['titles'].append({'key': key, 'text': text, 'line': line_num})
+                        else:
+                            content['companies'].append({'key': key, 'text': text, 'line': line_num})
+
+            elif isinstance(node[1], str) and node[1].startswith('$L') and props.get('textColorExpression') == 176:
+                # NOTE: we match any '$L<hex>' reference here, not a specific one
+                # like the old hardcoded '$Lf'. These references are import-table
+                # slot numbers assigned per-response based on module load order
+                # (see the 'N:I["hash",[],"Name"]' lines at the top of the RSC
+                # stream) -- they are NOT stable identifiers for "this is the text
+                # component". The same visual component can show up as $Lf in one
+                # response and $L8 (or anything else) in the next. What *is*
+                # stable is the props shape: textColorExpression 176 marks this
+                # specific bold/colored text style (used for employment-type
+                # badges like "Full-time", among other UI strings).
+                text_props = props.get('textProps', {})
+                text_children = text_props.get('children', '')
+                if isinstance(text_children, list) and text_children:
+                    text = text_children[0] if isinstance(text_children[0], str) else ''
+                    if text and text.strip():
+                        content['employment_types'].append({'key': key, 'text': text.strip(), 'line': line_num})
+
+            elif isinstance(node[1], str) and node[1].startswith('$L') and props.get('textColorExpression') == 179:
+                # Same reasoning as above: textColorExpression 179 is the stable
+                # signal for duration/location text, regardless of which $L<hex>
+                # slot happens to reference the underlying text component.
+                text_props = props.get('textProps', {})
+                text_children = text_props.get('children', '')
+                if isinstance(text_children, list) and text_children:
+                    text = text_children[0] if isinstance(text_children[0], str) else ''
+                    if text and re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}', text):
+                        content['durations'].append({'key': key, 'text': text, 'line': line_num})
                     else:
-                        content['companies'].append({'key': key, 'text': text, 'line': line_num})
+                        content['locations'].append({'key': key, 'text': text, 'line': line_num})
 
-        elif node[1] == '$Lf' and props.get('textColorExpression') == 176:
-            text_props = props.get('textProps', {})
-            text_children = text_props.get('children', '')
-            if isinstance(text_children, list) and text_children:
-                text = text_children[0] if isinstance(text_children[0], str) else ''
-                if text and text.strip():
-                    content['employment_types'].append({'key': key, 'text': text.strip(), 'line': line_num})
-
-        elif node[1] == '$Lf' and props.get('textColorExpression') == 179:
-            text_props = props.get('textProps', {})
-            text_children = text_props.get('children', '')
-            if isinstance(text_children, list) and text_children:
-                text = text_children[0] if isinstance(text_children[0], str) else ''
-                if text and re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}', text):
-                    content['durations'].append({'key': key, 'text': text, 'line': line_num})
-                else:
-                    content['locations'].append({'key': key, 'text': text, 'line': line_num})
-
-        elif node[1] in ('$L43', '$L51', '$L42', '$L44', '$L3c') and 'textProps' in props:
-            content['descriptions'].append({'key': key, 'node': node, 'line': line_num})
+            elif (
+                isinstance(node[1], str) and node[1].startswith('$L')
+                and 'textProps' in props
+                and isinstance(props.get('expansionKey'), str)
+                and props['expansionKey'].startswith('expandable_text_block')
+            ):
+                # Description/expandable-text-block nodes. Previously matched by
+                # a hardcoded list of reference numerals ('$L43', '$L51', ...),
+                # which rot for the same reason as the title/duration matching
+                # above: those numerals are just import-table slot assignments,
+                # not stable identifiers. The stable signal here is the
+                # `expansionKey` prop, which LinkedIn sets to a value starting
+                # with "expandable_text_block" specifically for these
+                # show-more/show-less position-description blocks.
+                content['descriptions'].append({'key': key, 'node': node, 'line': line_num})
 
     for field_type in content:
         content[field_type].sort(key=lambda x: x['line'])
@@ -374,14 +453,18 @@ def extract_about_section(nodes: Dict, line_numbers: Dict) -> Optional[str]:
     about_text_parts = []
     seen = set()
 
+    flat_nodes = _flatten_all_nodes(nodes, line_numbers)
+
     about_header_line = None
-    for key, node in nodes.items():
-        if not isinstance(node, list) or len(node) < 4:
-            continue
+    for node, line_num in flat_nodes:
         props = node[3] if isinstance(node[3], dict) else {}
         text_props = props.get('textProps', {})
         children = text_props.get('children', [])
-        if (node[1] in ('h2', '$L20', '$L16') or text_props.get('tagName') == 'h2') and children:
+        # NOTE: tagName == 'h2' (or a literal 'h2' tag) is the stable signal
+        # here -- node[1] can also be an '$L<hex>' component reference, but
+        # that's just a per-response import-table slot number and can't be
+        # trusted to stay e.g. '$L20' across requests.
+        if (node[1] == 'h2' or text_props.get('tagName') == 'h2') and children:
             child_texts = []
 
             def get_texts(ch):
@@ -393,30 +476,34 @@ def extract_about_section(nodes: Dict, line_numbers: Dict) -> Optional[str]:
 
             get_texts(children)
             if any('About' in t for t in child_texts):
-                about_header_line = line_numbers.get(key, 0)
+                about_header_line = line_num
                 break
 
     if about_header_line is None:
         return None
 
     candidate_nodes = []
-    for key, node in nodes.items():
-        if not isinstance(node, list) or len(node) < 4:
-            continue
-        line_num = line_numbers.get(key, 0)
+    for node, line_num in flat_nodes:
         if line_num <= about_header_line:
             continue
         props = node[3] if isinstance(node[3], dict) else {}
-        if node[1] in ('$L51', '$L43', '$L17', '$L16', '$Lb', '$L19') and 'textProps' in props:
+        # NOTE: previously matched a hardcoded list of reference numerals
+        # ('$L51', '$L43', '$L17', ...), which rot the same way the
+        # experience-section ones did (see _iter_dom_nodes/find_content_nodes
+        # docstrings) -- they're just per-response import-table slot numbers,
+        # not stable component identifiers. The stable signal is the
+        # `expansionKey` prop, which LinkedIn sets to a value starting with
+        # "expandable_text_block" for these show-more/show-less text blocks,
+        # regardless of which $L<hex> slot references the component.
+        if isinstance(node[1], str) and node[1].startswith('$L') and 'textProps' in props:
             text_props = props['textProps']
             children = text_props.get('children', [])
-            if children:
-                if 'lineClamp' in str(props) or 'expandable_text_block' in str(props):
-                    candidate_nodes.append((line_num, key, node))
+            if children and isinstance(props.get('expansionKey'), str) and props['expansionKey'].startswith('expandable_text_block'):
+                candidate_nodes.append((line_num, node))
 
     candidate_nodes.sort(key=lambda x: x[0])
 
-    for _, key, node in candidate_nodes[:1]:
+    for _, node in candidate_nodes[:1]:
         props = node[3] if isinstance(node[3], dict) else {}
         text_props = props.get('textProps', {})
         children = text_props.get('children', [])
